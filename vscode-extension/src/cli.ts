@@ -10,17 +10,29 @@ export interface CliResult {
   stderr: string;
 }
 
+// The extension's private storage dir — where we install a managed CLI venv when
+// there's no workspace to install into (so voice/bridge work without a folder open).
+let extStorageDir: string | undefined;
+export function initCli(ctx: vscode.ExtensionContext): void {
+  extStorageDir = ctx.globalStorageUri.fsPath;
+}
+
+/** Path to the openhome binary inside a `.venv` under baseDir. */
+function venvOpenhome(baseDir: string): string {
+  const rel =
+    process.platform === "win32" ? ["Scripts", "openhome.exe"] : ["bin", "openhome"];
+  return path.join(baseDir, ".venv", ...rel);
+}
+
 /**
- * When the user hasn't set a path, look for a project virtualenv's openhome
- * binary next to (or above) the working directory, so it works out of the box
- * without the CLI being on PATH. Falls back to the bare `openhome` command.
+ * Resolve the CLI command. Prefers a project `.venv` at/above the working dir,
+ * then the extension's managed venv (works with no folder open), else the bare
+ * `openhome` command from PATH.
  */
 function autoDetectCli(cwd: string): string {
-  const binName = process.platform === "win32" ? "openhome.exe" : "openhome";
-  const venvRel = process.platform === "win32" ? ["Scripts", binName] : ["bin", binName];
   let dir = cwd;
   for (let i = 0; i < 6 && dir; i++) {
-    const candidate = path.join(dir, ".venv", ...venvRel);
+    const candidate = venvOpenhome(dir);
     if (fs.existsSync(candidate)) {
       return candidate;
     }
@@ -29,6 +41,9 @@ function autoDetectCli(cwd: string): string {
       break;
     }
     dir = parent;
+  }
+  if (extStorageDir && fs.existsSync(venvOpenhome(extStorageDir))) {
+    return venvOpenhome(extStorageDir);
   }
   return "openhome";
 }
@@ -162,17 +177,22 @@ function exec(cmd: string, args: string[], cwd?: string): Promise<{ code: number
  * into it (the extension then auto-detects `.venv/bin/openhome`). Shows a
  * progress notification. Returns true on success.
  */
-async function autoInstallCli(cwd: string): Promise<boolean> {
+async function autoInstallCli(baseDir: string): Promise<boolean> {
   const isWin = process.platform === "win32";
+  try {
+    fs.mkdirSync(baseDir, { recursive: true });
+  } catch {
+    /* best effort */
+  }
   return vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: "OpenHome: setting up the CLI", cancellable: false },
     async (progress) => {
-      let venvPy = findVenvPython(cwd);
+      let venvPy = findVenvPython(baseDir);
       if (!venvPy) {
         progress.report({ message: "creating a virtual environment…" });
-        let r = await exec(isWin ? "python" : "python3", ["-m", "venv", ".venv"], cwd);
+        let r = await exec(isWin ? "python" : "python3", ["-m", "venv", ".venv"], baseDir);
         if (r.code !== 0 && !isWin) {
-          r = await exec("python", ["-m", "venv", ".venv"], cwd); // some distros only have `python`
+          r = await exec("python", ["-m", "venv", ".venv"], baseDir); // some distros only have `python`
         }
         if (r.code !== 0) {
           vscode.window.showErrorMessage(
@@ -180,25 +200,21 @@ async function autoInstallCli(cwd: string): Promise<boolean> {
           );
           return false;
         }
-        venvPy = findVenvPython(cwd);
+        venvPy = findVenvPython(baseDir);
       }
       if (!venvPy) {
         vscode.window.showErrorMessage("OpenHome: venv created but its Python wasn't found.");
         return false;
       }
-      // openhome-client isn't on PyPI — install editable from the repo's cli/ if
-      // present; otherwise try PyPI (works only once/if it's published there).
-      const src = findCliSource(cwd);
+      // Install from the repo's cli/ (editable) when present, else from PyPI.
+      const src = findCliSource(baseDir);
       const target = src ? ["-e", src] : ["openhome-client"];
       progress.report({
-        message: src ? "installing the CLI from cli/ …" : "installing openhome-client…",
+        message: src ? "installing the CLI from cli/ …" : "installing openhome-client from PyPI…",
       });
-      const r = await exec(venvPy, ["-m", "pip", "install", "--upgrade", ...target], cwd);
+      const r = await exec(venvPy, ["-m", "pip", "install", "--upgrade", ...target], baseDir);
       if (r.code !== 0) {
-        const hint = src
-          ? ""
-          : " (openhome-client isn't on PyPI — open the OpenHome/abilities repo so it can install from cli/).";
-        vscode.window.showErrorMessage(`OpenHome: pip install failed.${hint} ${r.out.trim().slice(-260)}`);
+        vscode.window.showErrorMessage(`OpenHome: pip install failed. ${r.out.trim().slice(-260)}`);
         return false;
       }
       return true;
@@ -226,18 +242,15 @@ export async function ensureCli(): Promise<boolean> {
   }
 
   const { cwd } = cliConfig();
-  if (!cwd) {
-    const pick = await vscode.window.showWarningMessage(
-      "OpenHome CLI not found, and no folder is open to install it into. Open your OpenHome/abilities folder, or set the CLI path.",
-      "Set path…"
-    );
-    if (pick === "Set path…") {
-      await vscode.commands.executeCommand("workbench.action.openSettings", "openhome.cliPath");
-    }
+  // Install into the workspace if one is open, otherwise into the extension's
+  // own storage so voice/bridge work even with no folder open.
+  const baseDir = cwd || extStorageDir;
+  if (!baseDir) {
+    vscode.window.showErrorMessage("OpenHome: couldn't determine where to install the CLI.");
     return false;
   }
 
-  if (!(await autoInstallCli(cwd))) {
+  if (!(await autoInstallCli(baseDir))) {
     return false;
   }
   res = await runCli(["--help"]); // re-check now that it should be installed
