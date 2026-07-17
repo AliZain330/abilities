@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import * as api from "./api";
 import * as templates from "./templates";
-import { ensureCli, runInTerminal, runCliOrNotify } from "./cli";
+import { ensureCli, runInTerminal, runCliOrNotify, initCli } from "./cli";
 import { AccountProvider, AbilitiesProvider, ActionsProvider, LocalProvider, Node } from "./trees";
 
 const MIN_TRIGGER_LETTERS = 4;
@@ -29,6 +29,7 @@ function triggerError(csv: string): string | undefined {
 
 export function activate(context: vscode.ExtensionContext): void {
   api.initApi(context.secrets);
+  initCli(context);
 
   const account = new AccountProvider();
   const abilities = new AbilitiesProvider();
