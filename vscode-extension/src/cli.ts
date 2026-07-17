@@ -206,15 +206,32 @@ async function autoInstallCli(baseDir: string): Promise<boolean> {
         vscode.window.showErrorMessage("OpenHome: venv created but its Python wasn't found.");
         return false;
       }
+      // Upgrade pip first — old pip (bundled with some Pythons) can't find wheels
+      // for numpy/pyaudio and fails trying to build them from source.
+      progress.report({ message: "upgrading pip…" });
+      await exec(venvPy, ["-m", "pip", "install", "--disable-pip-version-check", "--upgrade", "pip"], baseDir);
+
       // Install from the repo's cli/ (editable) when present, else from PyPI.
       const src = findCliSource(baseDir);
       const target = src ? ["-e", src] : ["openhome-client"];
       progress.report({
         message: src ? "installing the CLI from cli/ …" : "installing openhome-client from PyPI…",
       });
-      const r = await exec(venvPy, ["-m", "pip", "install", "--upgrade", ...target], baseDir);
+      const r = await exec(
+        venvPy,
+        ["-m", "pip", "install", "--disable-pip-version-check", "--upgrade", ...target],
+        baseDir
+      );
       if (r.code !== 0) {
-        vscode.window.showErrorMessage(`OpenHome: pip install failed. ${r.out.trim().slice(-260)}`);
+        // Surface the actual error lines, not the trailing pip-version notice.
+        const errLines = r.out
+          .split("\n")
+          .filter((l) => /error|failed|could not|no matching|not supported/i.test(l))
+          .slice(-4)
+          .join("  ");
+        vscode.window.showErrorMessage(
+          `OpenHome: pip install failed. ${errLines || r.out.trim().slice(-300)}`
+        );
         return false;
       }
       return true;
