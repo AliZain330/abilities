@@ -100,7 +100,7 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
 
-    #{{register capability}}
+    # {{register capability}}
 
     def call(self, worker: AgentWorker):
         self.worker = worker
