@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import (
+from .playbook_base import (
     OUTCOME_CONTINUE,
     OUTCOME_ESCALATE,
     OUTCOME_UNSAFE,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import ac_not_cooling, generic
+from . import playbook_ac_not_cooling as ac_not_cooling, playbook_generic as generic
 
 PLAYBOOKS = {
     ac_not_cooling.ISSUE_TYPE: ac_not_cooling,
