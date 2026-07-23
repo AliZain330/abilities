@@ -141,10 +141,16 @@ class ImmersiveDiagnosisCapability(MatchingCapability):
             handler.info(text)
 
     def _is_exit(self, text: str) -> bool:
-        lower = (text or "").lower().strip()
+        # Short ambiguous words ("stop", "done") only match as a whole word
+        # (so "yeah, stop" still exits but "my AC stopped cooling" — the
+        # core diagnosis use case — does not false-trigger on "stopped").
+        # Distinctive multi-word phrases ("that's all", "i'm good") still
+        # match anywhere in the reply.
+        lower = (text or "").lower().strip().rstrip(".!?")
         if not lower:
             return False
-        return any(word in lower for word in EXIT_WORDS)
+        tokens = set(lower.split())
+        return any((word in lower if " " in word else word in tokens) for word in EXIT_WORDS)
 
     def _strip_fences(self, text: str) -> str:
         raw = (text or "").strip()
