@@ -87,6 +87,21 @@ class ImmersiveFeedbackCapability(MatchingCapability):
     def log(self, message: str):
         self.worker.editor_logging_handler.info(f"[ImmersiveFeedback] {message}")
 
+    @staticmethod
+    def _matches_any_word(text: str, words) -> bool:
+        # Short ambiguous words ("no", "stop") only match as a whole word (so
+        # "yeah, stop" still matches but "no" inside "noisy" or "stop"
+        # inside "stopped" does not false-trigger). Distinctive multi-word
+        # phrases ("that's it") still match anywhere in the reply.
+        lower = (text or "").lower().strip().rstrip(".!?")
+        if not lower:
+            return False
+        tokens = set(lower.split())
+        return any((word in lower if " " in word else word in tokens) for word in words)
+
+    def _is_exit(self, text: str) -> bool:
+        return self._matches_any_word(text, EXIT_WORDS)
+
     def log_error(self, message: str):
         self.worker.editor_logging_handler.error(f"[ImmersiveFeedback] {message}")
 
@@ -238,7 +253,7 @@ class ImmersiveFeedbackCapability(MatchingCapability):
             if not reply:
                 continue
             lowered = reply.lower()
-            if any(word in lowered for word in EXIT_WORDS):
+            if self._is_exit(reply):
                 return None
             for i, job in enumerate(jobs):
                 if (
@@ -285,7 +300,7 @@ class ImmersiveFeedbackCapability(MatchingCapability):
                         return
                     continue
                 empty_replies = 0
-                if any(word in user_input.lower() for word in EXIT_WORDS):
+                if self._is_exit(user_input):
                     await self.capability_worker.speak(LINE_SAVED_FOR_LATER)
                     return
                 rating = self.classify_rating(user_input)
@@ -299,8 +314,7 @@ class ImmersiveFeedbackCapability(MatchingCapability):
             comment_reply = await self.capability_worker.user_response()
             comment = ""
             if comment_reply and comment_reply.strip():
-                lowered = comment_reply.lower()
-                if not any(word in lowered for word in SKIP_WORDS | EXIT_WORDS):
+                if not self._matches_any_word(comment_reply, SKIP_WORDS | EXIT_WORDS):
                     comment = comment_reply.strip()
 
             # run_confirmation_loop appends its own yes/no instruction.
