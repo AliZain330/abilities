@@ -97,6 +97,17 @@ class ImmersiveProviderCapability(MatchingCapability):
     def log_error(self, message: str):
         self.worker.editor_logging_handler.error(f"[ImmersiveProvider] {message}")
 
+    def _is_exit(self, text: str) -> bool:
+        # Short ambiguous words ("stop", "done") only match as a whole word
+        # (so "yeah, stop" still exits but "stopped" in normal conversation
+        # does not false-trigger). Distinctive multi-word phrases ("never
+        # mind") still match anywhere in the reply.
+        lower = (text or "").lower().strip().rstrip(".!?")
+        if not lower:
+            return False
+        tokens = set(lower.split())
+        return any((word in lower if " " in word else word in tokens) for word in EXIT_WORDS)
+
     # ---------------------------------------------------------- backend I/O
     def backend_url(self) -> str:
         """Backend base URL from Settings -> API Keys, else the constant."""
@@ -297,7 +308,7 @@ class ImmersiveProviderCapability(MatchingCapability):
             if not reply:
                 continue
             lowered = reply.lower()
-            if any(word in lowered for word in EXIT_WORDS):
+            if self._is_exit(reply):
                 return None
             for i, request in enumerate(open_requests):
                 if request["category"].lower() in lowered or (
@@ -347,7 +358,7 @@ class ImmersiveProviderCapability(MatchingCapability):
                         return
                     continue
                 empty_replies = 0
-                if any(word in user_input.lower() for word in EXIT_WORDS):
+                if self._is_exit(user_input):
                     await self.capability_worker.speak(LINE_QUOTES_SAVED)
                     return
 
